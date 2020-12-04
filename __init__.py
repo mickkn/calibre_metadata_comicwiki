@@ -31,16 +31,16 @@ class ComicWiki(Source):
     description = ('Downloads Metadata and Covers from ComicWiki.dk based on Title')
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
-    version = (1, 0, 0)
+    version = (0, 0, 1)
     minimum_calibre_version = (5, 0, 1)
 
     capabilities = frozenset(['identify', 'cover'])
-    touched_fields = frozenset(['identifier:comicwiki', 'title', 'authors', 'comments', 'publisher', 'pubdate'])
+    touched_fields = frozenset(['identifier:comicwiki','identifier:isbn', 'title', 'authors', 'series', 'tags', 'comments', 'publisher', 'pubdate'])
 
     supports_gzip_transfer_encoding = True
 
     ID_NAME = 'comicwiki'
-    BASE_URL = 'https://www.google.com/search?q=comicwiki.dk:'
+    BASE_URL = 'https://www.google.com/search?q=site:comicwiki.dk '
 
     def get_book_url(self, identifiers):
         comicwiki_id = identifiers.get(self.ID_NAME, None)
@@ -58,38 +58,27 @@ class ComicWiki(Source):
         # Initialize browser object
         br = self.browser
         
-        # Get title
-        
-        title = identifiers.get('title', None)
-        authors = identifiers.get('authors', None)
-
+        # Get matches for title + author
         if title and authors:
-            print("    Found authors and title: %s - %s" % (authors, title))
-            google_matches.append('%s%s+%s' % (ComicWiki.BASE_URL, authors.replace(" ", "+"), title.replace(" ", "+")))
+            log.info("    Found authors and title: %s - %s" % (authors, title))
+            google_matches.append('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+"), title.replace(" ", "+").replace("-","+")))
             google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-            for url in google_nodes[:8]:
+            for url in google_nodes[:4]:
                 matches.append(url)
+        # Get matches for only title (google kinda like to find match for only authors)
         if title:
-            print("    Only found title: %s" % title)
-            google_matches.append('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+")))
+            log.info("    Only found title: %s" % title)
+            google_matches.append('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+").replace("-","+")))
             google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-            for url in google_nodes[:8]:
+            for url in google_nodes[:4]:
                 matches.append(url)
         # Return if no Title
         if abort.is_set():
             return
-
-        # Overwrite matches with google hits.
-        """
-        google_raw = br.open_novisit(matches[0], timeout=30).read().strip()
-        google_root = parse(google_raw)
-        google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-        matches + google_nodes[:4]
-        """
 
         # Report the matches
         log.info("    Matches are: ", matches)
@@ -206,6 +195,8 @@ class Worker(Thread):  # Get details
         self.authors = []
         self.comments = None
         self.pubdate = None
+        self.series = None
+        self.series_index = None
 
         # Mapping language to something calibre understand.
         lm = {
@@ -262,18 +253,6 @@ class Worker(Thread):  # Get details
             self.log.error("Error cleaning HTML")
             return
 
-        # Get the json data within the HTML code (some stuff is easier to get with json)
-        """
-        try:
-            print("JSON NO NO")
-            #json_raw = root.xpath('(//script[@type="application/ld+json"])[2]')
-            #json_root = json.loads(json_raw[0].text.strip())
-            #print(json.dumps(json_root, indent=4, sort_keys=True))
-        except:
-            self.log.error("Error loading JSON data")
-            return
-        """
-
         # Get the title of the book
         try:
             title_node = root.xpath('//h1[@class="firstHeading"]')
@@ -287,8 +266,9 @@ class Worker(Thread):  # Get details
             author_node = root.xpath('//td[contains(text(),"Forfatter:")]/following-sibling::td/a')
             designer_node = root.xpath('//td[contains(text(),"Tegner:")]/following-sibling::td/a')
             #print(author_node[0].text.strip())
-            if author_node[0].text.strip() not in self.authors:
-                self.authors.append(author_node[0].text.strip())
+            if author_node[0].text is not None:
+                if author_node[0].text.strip() not in self.authors:
+                    self.authors.append(author_node[0].text.strip())
             if designer_node[0].text.strip() not in self.authors:
                 self.authors.append(designer_node[0].text.strip())
             #print(type(self.authors))
@@ -296,16 +276,6 @@ class Worker(Thread):  # Get details
         except:
             self.log.exception('Error parsing authors for url: %r' % self.url)
             self.authors = None
-
-        # Some books have ratings, let's use them.
-        """
-        try:
-            print("No rating")
-            #self.rating = float(json_root['aggregateRating']['ratingValue'])
-        except:
-            self.log.exception('Error parsing rating for url: %r' % self.url)
-            self.rating = 0.0
-        """
 
         # Get the ISBN number from the site
         try:
@@ -317,13 +287,15 @@ class Worker(Thread):  # Get details
 
         # Get the comments/blurb for the book
         try:
-            comment_node = root.xpath('//div[@class="notice metadata"]/following-sibling::p')
+            comment_node = root.xpath('//div[@class="notice metadata"]/following-sibling::p | \
+                                       //span[@id="Forlagets_resumé"]/parent::h2/following-sibling::p | \
+                                       //span[@id="Bibliotekernes_resumé"]/parent::h2/following-sibling::p')
+            #comment_node = root.xpath('//span[@id="Forlagets_resumé"]/parent::h2/following-sibling::p')
             for nodes in comment_node:
                 if not self.comments:
-                    self.comments = nodes.text.strip()
-                elif nodes is not None:
-                    self.comments = self.comments + " " + nodes.text.strip()
-            #print(self.comments)
+                    self.comments = nodes.text
+                elif nodes.text is not None:
+                    self.comments = self.comments + " " + nodes.text
         except:
             self.log.exception('Error parsing comments for url: %r' % self.url)
             self.comments = None
@@ -345,16 +317,15 @@ class Worker(Thread):  # Get details
         except:
             self.log.exception('Error parsing publisher for url: %r' % self.url)
 
-        # Get the language of the book. Only english and danish are supported tho
-        """
+        # Set series
         try:
-            print("No language support")
-            #language = json_root['inLanguage']['name']
-            #language = self.lang_map.get(language, None)
-            #self.language = language
+            series_node = root.xpath('//div[@class="NavHead"]/a')
+            series_index_node =root.xpath('//span[@class="nr"]')
+            self.series = series_node[0].text
+            self.series_index = series_index_node[0].text
+            #print("Series: %s %s" % (self.series, self.series_index))
         except:
-            self.log.exception('Error parsing language for url: %r' % self.url)
-        """
+            self.log.exception('Error parsing series data for url: %r' % self.url)
 
         # Get the publisher date
         try:
@@ -370,7 +341,7 @@ class Worker(Thread):  # Get details
                     releases.append(int(year))
             year_str = str(min(releases))
             date_str = f"01-01-{year_str}"
-            print(date_str)
+            #print(date_str)
             format_str = '%d-%m-%Y' # The format
             self.pubdate = datetime.datetime.strptime(date_str, format_str)
         except:
@@ -379,15 +350,8 @@ class Worker(Thread):  # Get details
         # Setup the metadata
         meta_data = Metadata(self.title, self.authors)
         meta_data.set_identifier('comicwiki', self.url)
+        meta_data.set_identifier('isbn', self.isbn)
 
-        # Set rating
-        """
-        if self.rating:
-            try:
-                meta_data.rating = self.rating
-            except:
-                self.log.exception('Error loading rating')
-        """
         # Set ISBN
         if self.isbn:
             try:
@@ -412,28 +376,28 @@ class Worker(Thread):  # Get details
                 meta_data.publisher = self.publisher
             except:
                 self.log.exception('Error loading publisher')
-        # Set language
-        """
-        if self.language:
-            try:
-                meta_data.language = self.language
-            except:
-                self.log.exception('Error loading language')
-        """
         # Set comments/blurb
         if self.comments:
             try:
                 meta_data.comments = self.comments
             except:
                 self.log.exception("Error loading comments")
+        # Set series
+        if self.series:
+            try:
+                meta_data.series = self.series
+                meta_data.series_index = self.series_index
+            except:
+                self.log.exception("Error loading series and/or series index")
+        # Set tags
+        meta_data.tags = ('Comic', 'Graphic Novel')        
         # Set publisher data
-        
         if self.pubdate:
             try:
                 meta_data.pubdate = self.pubdate
             except:
                 self.log.exception('Error loading pubdate')
-        
+
         # Put meta data
         self.plugin.clean_downloaded_metadata(meta_data)
         self.result_queue.put(meta_data)
@@ -445,6 +409,16 @@ if __name__ == '__main__':  # tests
 
     tests = [
 
+            (  # A comic
+                {
+                'identifiers': {'title': 'Den forkælede prinsesse', 'authors': 'Thom Roep & Piet Wijn'}, 
+                'title': 'Den forkælede prinsesse', 
+                'authors': ['Thom Roep', 'Piet Wijn']
+                },[
+                    title_test('Den forkælede prinsesse', exact=True),
+                    authors_test(['Thom Roep', 'Piet Wijn'])]
+            ),
+
             (  # A book with a title and author
                 {
                 'identifiers': {'title': 'Klo', 'authors': 'Régis Loisel'}, 
@@ -453,16 +427,6 @@ if __name__ == '__main__':  # tests
                 },[
                     title_test('Klo', exact=True),
                     authors_test(['Régis Loisel'])]
-            ),
-
-            (  # A book with more authors
-                {
-                'identifiers': {'title': 'Den gamle by', 'authors': 'Katsuhiro Otomo'}, 
-                'title': 'Den gamle by', 
-                'authors': ['Katsuhiro Otomo']
-                },[
-                    title_test('Den gamle by', exact=True),
-                    authors_test(['René Goscinny', 'Katsuhiro Otomo'])]
             )
 
             ]
