@@ -28,14 +28,14 @@ from calibre.utils.cleantext import clean_ascii_chars
 
 class ComicWiki(Source):
     name = 'ComicWiki'
-    description = ('Downloads Metadata and Covers from ComicWiki.dk based on Title')
+    description = ('Downloads Metadata and Covers from ComicWiki.dk based on Title and Author')
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
-    version = (0, 0, 1)
+    version = (1, 0, 0)
     minimum_calibre_version = (5, 0, 1)
 
     capabilities = frozenset(['identify', 'cover'])
-    touched_fields = frozenset(['identifier:comicwiki','identifier:isbn', 'title', 'authors', 'series', 'tags', 'comments', 'publisher', 'pubdate'])
+    touched_fields = frozenset(['identifier:comicwiki', 'title', 'authors', 'series', 'tags', 'comments', 'publisher', 'pubdate'])
 
     supports_gzip_transfer_encoding = True
 
@@ -55,27 +55,42 @@ class ComicWiki(Source):
         google_matches = []
         matches = []
 
+        comicwiki = identifiers.get('comicwiki', None)
+        if comicwiki:
+            print("    Found comicwiki %s" % (comicwiki))
+            matches.append(comicwiki)
+        
+
         # Initialize browser object
         br = self.browser
         
-        # Get matches for title + author
-        if title and authors:
-            log.info("    Found authors and title: %s - %s" % (authors, title))
-            google_matches.append('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+"), title.replace(" ", "+").replace("-","+")))
-            google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
-            google_root = parse(google_raw)
-            google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-            for url in google_nodes[:4]:
-                matches.append(url)
+        log.info("    Matching with Title: %s & Author(s): %s" % (title, authors))
+
         # Get matches for only title (google kinda like to find match for only authors)
         if title:
-            log.info("    Only found title: %s" % title)
+            log.info("    Making matches with title: %s" % title)
+            log.info('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+").replace("-","+")))
             google_matches.append('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+").replace("-","+")))
             google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
+            log.info(google_nodes)
             for url in google_nodes[:4]:
-                matches.append(url)
+                if url != "#":
+                    matches.append(url)
+
+        # Get matches for title + author
+        if title and authors:
+            log.info("    Making matches with authors and title: %s - %s" % (authors, title))
+            log.info('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+").replace(",","+"), title.replace(" ", "+").replace("-","+")))
+            google_matches.append('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+"), title.replace(" ", "+").replace("-","+")))
+            google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
+            google_root = parse(google_raw)
+            google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
+            log.info(google_nodes)
+            for url in google_nodes[:4]:
+                if url != "#":
+                    matches.append(url)  
         # Return if no Title
         if abort.is_set():
             return
@@ -121,7 +136,7 @@ class ComicWiki(Source):
         Stolen from Goodreads.
         '''
         cached_url = self.get_cached_cover_url(identifiers)
-        if cached_url is None:
+        if cached_url == None:
             log.info('No cached cover found, running identify')
             rq = Queue()
             self.identify(log, rq, abort, title=title, authors=authors,
@@ -138,7 +153,7 @@ class ComicWiki(Source):
                 title=title, authors=authors, identifiers=identifiers))
             for mi in results:
                 cached_url = self.get_cached_cover_url(mi.identifiers)
-                if cached_url is not None:
+                if cached_url != None:
                     break
         if cached_url is None:
             log.info('No cover found')
@@ -195,6 +210,7 @@ class Worker(Thread):  # Get details
         self.authors = []
         self.comments = None
         self.pubdate = None
+        self.publisher = None
         self.series = None
         self.series_index = None
 
@@ -263,14 +279,18 @@ class Worker(Thread):  # Get details
 
         # Get the author of the book
         try:
-            author_node = root.xpath('//td[contains(text(),"Forfatter:")]/following-sibling::td/a')
+            author_node = root.xpath('//td[contains(text(),"Forfatter")]/following-sibling::td/a')
             designer_node = root.xpath('//td[contains(text(),"Tegner:")]/following-sibling::td/a')
-            #print(author_node[0].text.strip())
-            if author_node[0].text is not None:
-                if author_node[0].text.strip() not in self.authors:
-                    self.authors.append(author_node[0].text.strip())
-            if designer_node[0].text.strip() not in self.authors:
-                self.authors.append(designer_node[0].text.strip())
+            if len(author_node) > 0:
+                for author in author_node:
+                    if author.text != None:
+                        if author.text.strip() not in self.authors:
+                            self.authors.append(author.text.strip())
+            if len(designer_node) > 0:
+                for designer in designer_node:
+                    if designer.text != None:
+                        if designer.text.strip() not in self.authors:
+                            self.authors.append(designer.text.strip())
             #print(type(self.authors))
             #print(self.authors)
         except:
@@ -280,22 +300,27 @@ class Worker(Thread):  # Get details
         # Get the ISBN number from the site
         try:
             isbn_node = root.xpath('//a[@class="internal mw-magiclink-isbn"]')
-            self.isbn = isbn_node[0].text.strip().replace(" ", "").replace("ISBN", "").replace("-", "")
+            if len(isbn_node) > 0:
+                self.isbn = isbn_node[0].text.strip().replace(" ", "").replace("ISBN", "").replace("-", "")
         except:
             self.log.exception('Error parsing isbn for url: %r' % self.url)
             self.isbn = None
 
         # Get the comments/blurb for the book
         try:
-            comment_node = root.xpath('//div[@class="notice metadata"]/following-sibling::p | \
-                                       //span[@id="Forlagets_resumé"]/parent::h2/following-sibling::p | \
-                                       //span[@id="Bibliotekernes_resumé"]/parent::h2/following-sibling::p')
-            #comment_node = root.xpath('//span[@id="Forlagets_resumé"]/parent::h2/following-sibling::p')
-            for nodes in comment_node:
-                if not self.comments:
-                    self.comments = nodes.text
-                elif nodes.text is not None:
-                    self.comments = self.comments + " " + nodes.text
+            
+            comment_node = root.xpath('//span[contains(@id,"Indhold")]/parent::h2/following-sibling::ul[1]/li | \
+                                       //span[contains(@id,"Resumé")]/parent::h2/following-sibling::p | \
+                                       //span[contains(@id,"resumé")]/parent::h2/following-sibling::p | \
+                                       //span[contains(@id,"beskrivelse")]/parent::h2/following-sibling::p')
+            self.comments = ""
+            for node in comment_node:
+                comments = tostring(node, method='html', encoding=unicode).strip()
+                while comments.find('  ') >= 0:
+                    comments = comments.replace('  ', ' ')
+                comments = sanitize_comments_html(comments)
+                if comments != None:
+                    self.comments = self.comments + comments + " "
         except:
             self.log.exception('Error parsing comments for url: %r' % self.url)
             self.comments = None
@@ -303,9 +328,10 @@ class Worker(Thread):  # Get details
         # Parse the cover url for downloading the cover.
         try:
             image_sub_url = root.xpath('//div[@class="aib-image"]//img/@src')
-            self.cover_url = "https://comicwiki.dk" + image_sub_url[0]
-            self.log.info('    Parsed URL for cover: %r' % self.cover_url)
-            self.plugin.cache_identifier_to_cover_url(self.isbn, self.cover_url)
+            if len(image_sub_url) > 0:
+                self.cover_url = "https://comicwiki.dk" + image_sub_url[0]
+                self.log.info('    Parsed URL for cover: %r' % self.cover_url)
+                self.plugin.cache_identifier_to_cover_url(self.isbn, self.cover_url)
         except:
             self.log.exception('Error parsing cover for url: %r' % self.url)
             self.has_cover = bool(self.cover_url)
@@ -313,16 +339,19 @@ class Worker(Thread):  # Get details
         # Get the publisher name
         try:
             publisher_nodes = root.xpath('//table[contains(@id,"udgivelser")]//li//a')
-            self.publisher = publisher_nodes[0].text.strip()
+            if len(publisher_nodes) > 0:
+                self.publisher = publisher_nodes[0].text.strip()
         except:
             self.log.exception('Error parsing publisher for url: %r' % self.url)
 
         # Set series
         try:
             series_node = root.xpath('//div[@class="NavHead"]/a')
-            series_index_node =root.xpath('//span[@class="nr"]')
-            self.series = series_node[0].text
-            self.series_index = series_index_node[0].text
+            series_index_node = root.xpath('//span[@class="nr"]')
+            if len(series_node) > 0:
+                self.series = series_node[0].text
+            if len(series_index_node) > 0:   
+                self.series_index = series_index_node[0].text
             #print("Series: %s %s" % (self.series, self.series_index))
         except:
             self.log.exception('Error parsing series data for url: %r' % self.url)
@@ -331,19 +360,17 @@ class Worker(Thread):  # Get details
         try:
             releases = []
             years = []
-            #pubdate_node = root.xpath('(//dl[@class="product-info-list"]//dd)[2]') # Format dd-mm-yyyy
             year_nodes = root.xpath('//table[contains(@id,"udgivelser")]//li') # Format dd-mm-yyyy
-            #release_years = year_nodes[0].text.strip()
             for item in year_nodes:
-                if item.text is not None:
+                if item.text != None:
                     years = item.text.strip().replace(":","").replace(",", "").split(" ")
                 for year in years:
                     releases.append(int(year))
-            year_str = str(min(releases))
-            date_str = f"01-01-{year_str}"
-            #print(date_str)
-            format_str = '%d-%m-%Y' # The format
-            self.pubdate = datetime.datetime.strptime(date_str, format_str)
+            if len(releases) > 0:
+                year_str = str(min(releases))
+                date_str = f"01-01-{year_str}"
+                format_str = '%d-%m-%Y' # The format
+                self.pubdate = datetime.datetime.strptime(date_str, format_str)
         except:
             self.log.exception('Error parsing published date for url: %r' % self.url)
 
@@ -390,7 +417,7 @@ class Worker(Thread):  # Get details
             except:
                 self.log.exception("Error loading series and/or series index")
         # Set tags
-        meta_data.tags = ('Comic', 'Graphic Novel')        
+        meta_data.tags = ('Comics', 'Graphic Novels')        
         # Set publisher data
         if self.pubdate:
             try:
@@ -411,22 +438,12 @@ if __name__ == '__main__':  # tests
 
             (  # A comic
                 {
-                'identifiers': {'title': 'Den forkælede prinsesse', 'authors': 'Thom Roep & Piet Wijn'}, 
-                'title': 'Den forkælede prinsesse', 
-                'authors': ['Thom Roep', 'Piet Wijn']
+                'identifiers': {'title': 'Soltemplet', 'authors': 'Hergé'}, 
+                'title': 'Soltemplet', 
+                'authors': ['Hergé']
                 },[
-                    title_test('Den forkælede prinsesse', exact=True),
-                    authors_test(['Thom Roep', 'Piet Wijn'])]
-            ),
-
-            (  # A book with a title and author
-                {
-                'identifiers': {'title': 'Klo', 'authors': 'Régis Loisel'}, 
-                'title': 'Klo', 
-                'authors': ['Régis Loisel']
-                },[
-                    title_test('Klo', exact=True),
-                    authors_test(['Régis Loisel'])]
+                    title_test('Soltemplet', exact=True),
+                    authors_test(['Hergé'])]
             )
 
             ]
