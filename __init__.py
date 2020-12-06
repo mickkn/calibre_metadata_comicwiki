@@ -8,19 +8,17 @@ __docformat__ = 'restructuredtext el'
 import socket
 import time
 import datetime
-import json
 try:
     from queue import Empty, Queue
 except ImportError:
     from Queue import Empty, Queue
 from six import text_type as unicode
 from html5_parser import parse
-from lxml.html import fromstring, tostring
+from lxml.html import tostring
 from threading import Thread
 from calibre.ebooks.metadata.sources.base import Source
 from calibre.ebooks.metadata.book.base import Metadata
 from calibre.library.comments import sanitize_comments_html
-from calibre.utils.cleantext import clean_ascii_chars
 
 # This is a metadata plugin for Calibre. It has been made and tested on Calibre 5.4.2
 # Most of the stuff is taken from the Goodreads plugin and Biblionet plugin.
@@ -51,43 +49,41 @@ class ComicWiki(Source):
         '''
         Redefined identity() function
         '''
-        # Create matches list
+        # Create matches lists
         google_matches = []
         matches = []
 
+        # Add comicwiki url to matches if present
         comicwiki = identifiers.get('comicwiki', None)
         if comicwiki:
             print("    Found comicwiki %s" % (comicwiki))
             matches.append(comicwiki)
         
-
         # Initialize browser object
         br = self.browser
-        
-        log.info("    Matching with Title: %s & Author(s): %s" % (title, authors))
 
         # Get matches for only title (google kinda like to find match for only authors)
         if title:
-            log.info("    Making matches with title: %s" % title)
-            log.info('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+").replace("-","+")))
+            #log.info("    Making matches with title: %s" % title)
+            #log.info('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+").replace("-","+")))
             google_matches.append('%s%s' % (ComicWiki.BASE_URL, title.replace(" ", "+").replace("-","+")))
             google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-            log.info(google_nodes)
+            #log.info(google_nodes)
             for url in google_nodes[:4]:
                 if url != "#":
                     matches.append(url)
 
         # Get matches for title + author
         if title and authors:
-            log.info("    Making matches with authors and title: %s - %s" % (authors, title))
-            log.info('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+").replace(",","+"), title.replace(" ", "+").replace("-","+")))
+            #log.info("    Making matches with authors and title: %s - %s" % (authors, title))
+            #log.info('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+").replace(",","+"), title.replace(" ", "+").replace("-","+")))
             google_matches.append('%s%s+%s' % (ComicWiki.BASE_URL, authors[0].replace(" ", "+"), title.replace(" ", "+").replace("-","+")))
             google_raw = br.open_novisit(google_matches[0], timeout=30).read().strip()
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
-            log.info(google_nodes)
+            #log.info(google_nodes)
             for url in google_nodes[:4]:
                 if url != "#":
                     matches.append(url)  
@@ -173,6 +169,7 @@ def parse_comments(root):
     '''
     Function for parsing comments and clean them up a little
     Re-written script from the Goodreads script
+    Not really used in this plugin (should just be deleted.)
     '''
     # Look for description
     description_node = root.xpath('(//div[@class="product-page-block"]//p)[1]')
@@ -214,7 +211,7 @@ class Worker(Thread):  # Get details
         self.series = None
         self.series_index = None
 
-        # Mapping language to something calibre understand.
+        # Mapping language to something calibre understand. Just used in this plugin
         lm = {
             'eng': ('English', 'Engelsk'),
             'dan': ('Danish', 'Dansk'),
@@ -273,7 +270,6 @@ class Worker(Thread):  # Get details
         try:
             title_node = root.xpath('//h1[@class="firstHeading"]')
             self.title = title_node[0].text.strip()
-            #print(self.title)
         except:
             self.log.exception('Error parsing title for url: %r' % self.url)
 
@@ -291,8 +287,6 @@ class Worker(Thread):  # Get details
                     if designer.text != None:
                         if designer.text.strip() not in self.authors:
                             self.authors.append(designer.text.strip())
-            #print(type(self.authors))
-            #print(self.authors)
         except:
             self.log.exception('Error parsing authors for url: %r' % self.url)
             self.authors = None
@@ -308,11 +302,12 @@ class Worker(Thread):  # Get details
 
         # Get the comments/blurb for the book
         try:
-            
+            # The html change a lot for the different books. But got the most right here.
             comment_node = root.xpath('//span[contains(@id,"Indhold")]/parent::h2/following-sibling::ul[1]/li | \
                                        //span[contains(@id,"Resumé")]/parent::h2/following-sibling::p | \
                                        //span[contains(@id,"resumé")]/parent::h2/following-sibling::p | \
                                        //span[contains(@id,"beskrivelse")]/parent::h2/following-sibling::p')
+            # Init. the comments
             self.comments = ""
             for node in comment_node:
                 comments = tostring(node, method='html', encoding=unicode).strip()
@@ -368,7 +363,7 @@ class Worker(Thread):  # Get details
                     releases.append(int(year))
             if len(releases) > 0:
                 year_str = str(min(releases))
-                date_str = f"01-01-{year_str}"
+                date_str = f"01-01-{year_str}" # Only years on comicwiki, so just using 1th of January
                 format_str = '%d-%m-%Y' # The format
                 self.pubdate = datetime.datetime.strptime(date_str, format_str)
         except:
@@ -416,7 +411,7 @@ class Worker(Thread):  # Get details
                 meta_data.series_index = self.series_index
             except:
                 self.log.exception("Error loading series and/or series index")
-        # Set tags
+        # Set default tags
         meta_data.tags = ('Comics', 'Graphic Novels')        
         # Set publisher data
         if self.pubdate:
