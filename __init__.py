@@ -31,7 +31,7 @@ class ComicWiki(Source):
     description = ('Downloads Metadata and Covers from ComicWiki.dk based on Title and Author')
     supported_platforms = ['windows', 'osx', 'linux']
     author = 'Mick Kirkegaard'
-    version = (1, 0, 0)
+    version = (1, 1, 0)
     minimum_calibre_version = (5, 0, 1)
 
     capabilities = frozenset(['identify', 'cover'])
@@ -63,7 +63,7 @@ class ComicWiki(Source):
 
         # Initialize browser object
         br = self.browser
-        
+
         log.info("    Matching with Title: %s & Author(s): %s" % (title, authors))
 
         # Get matches for only title (google kinda like to find match for only authors)
@@ -75,7 +75,7 @@ class ComicWiki(Source):
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
             log.info(google_nodes)
-            for url in google_nodes[:4]:
+            for url in google_nodes[:2]:
                 if url != "#":
                     matches.append(url)
 
@@ -88,7 +88,7 @@ class ComicWiki(Source):
             google_root = parse(google_raw)
             google_nodes = google_root.xpath('(//div[@class="g"])//a/@href')
             log.info(google_nodes)
-            for url in google_nodes[:4]:
+            for url in google_nodes[:2]:
                 if url != "#":
                     matches.append(url)  
         # Return if no Title
@@ -346,7 +346,8 @@ class Worker(Thread):  # Get details
 
         # Set series
         try:
-            series_node = root.xpath('//div[@class="NavHead"]/a')
+            #series_node = root.xpath('//div[@class="NavHead"]/a')
+            series_node = root.xpath('//span[@class="nr"]//parent::th')
             series_index_node = root.xpath('//span[@class="nr"]')
             if len(series_node) > 0:
                 self.series = series_node[0].text
