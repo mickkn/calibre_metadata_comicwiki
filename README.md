@@ -1,2 +1,2 @@
-# calibre_metadata_comicwiki
-Metadata plugin for Calibre scraping comicwiki
+# Calibre METADATA from ComicWiki.dk
+Calibre plugin for fetching metadata from http://www.comicwiki.dk
