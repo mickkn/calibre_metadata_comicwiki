@@ -1,2 +1,6 @@
 [B]Version 1.0.0[/B] - 06 Dec 2020
 Initial release of plugin
+
+[B]Version 1.1.0[/B] - 10 Dec 2020
+Less agressive to the website (less requests)
+Changed the way series are read

@@ -103,7 +103,7 @@ class ComicWiki(Source):
         for w in workers:
             w.start()
             # Delay a little for every worker
-            time.sleep(0.1)
+            time.sleep(1)
 
         while not abort.is_set():
             a_worker_is_alive = False
